@@ -8,7 +8,7 @@ from anthropic import Anthropic, HUMAN_PROMPT, AI_PROMPT
 
 app = Flask(__name__)
 
-# Initialize the RAG model
+# Initialize the RAG model with the correct version
 RAG = RAGMultiModalModel.from_pretrained("vidore/colpali-v1.2")
 
 # Initialize Anthropic client
@@ -68,7 +68,18 @@ def query_document():
     # Perform the search on the specific index
     results = RAG_specific.search(query, k=k)
     
-    return jsonify({"results": results}), 200
+    # Convert Result objects to dictionaries
+    serializable_results = [
+        {
+            "doc_id": result.doc_id,
+            "page_num": result.page_num,
+            "score": result.score,
+            "metadata": result.metadata,
+            "base64": result.base64
+        } for result in results
+    ]
+    
+    return jsonify({"results": serializable_results}), 200
 
 @app.route('/query_image', methods=['POST'])
 def query_image():
@@ -88,6 +99,17 @@ def query_image():
         # Process the image query with Byaldi
         byaldi_results = RAG.search(query, image_path=image_path)
         
+        # Convert Result objects to dictionaries
+        serializable_results = [
+            {
+                "doc_id": result.doc_id,
+                "page_num": result.page_num,
+                "score": result.score,
+                "metadata": result.metadata,
+                "base64": result.base64
+            } for result in byaldi_results
+        ]
+        
         # Encode the image to base64
         with open(image_path, "rb") as image_file:
             encoded_image = base64.b64encode(image_file.read()).decode('utf-8')
@@ -96,7 +118,7 @@ def query_image():
         os.remove(image_path)
         
         # Process results with Claude
-        claude_prompt = f"{HUMAN_PROMPT} Here's an image encoded in base64: {encoded_image}\n\nAnd here's some information about the image: {byaldi_results}\n\nBased on this information, please answer the following question: {query}{AI_PROMPT}"
+        claude_prompt = f"{HUMAN_PROMPT} Here's an image encoded in base64: {encoded_image}\n\nAnd here's some information about the image: {serializable_results}\n\nBased on this information, please answer the following question: {query}{AI_PROMPT}"
         
         claude_response = anthropic.completions.create(
             model="claude-3-sonnet-20240229",
@@ -105,7 +127,7 @@ def query_image():
         )
         
         return jsonify({
-            "byaldi_results": byaldi_results,
+            "byaldi_results": serializable_results,
             "claude_answer": claude_response.completion,
             "tokens_consumed": {
                 "prompt_tokens": claude_response.usage.prompt_tokens,
