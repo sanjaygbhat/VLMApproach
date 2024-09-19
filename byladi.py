@@ -4,7 +4,7 @@ import base64
 from flask import Flask, request, jsonify
 from werkzeug.utils import secure_filename
 from byaldi import RAGMultiModalModel
-from anthropic import Anthropic, HUMAN_PROMPT, AI_PROMPT
+import anthropic
 
 app = Flask(__name__)
 
@@ -12,7 +12,9 @@ app = Flask(__name__)
 RAG = RAGMultiModalModel.from_pretrained("vidore/colpali-v1.2")
 
 # Initialize Anthropic client
-anthropic = Anthropic(api_key=os.environ.get("ANTHROPIC_API_KEY"))
+client = anthropic.Anthropic(
+    api_key=os.environ.get("ANTHROPIC_API_KEY")
+)
 
 # Store document identifiers and their corresponding indices
 document_indices = {}
@@ -80,27 +82,41 @@ def query_document():
     ]
     
     # Process results with Claude
-    claude_prompt = f"{HUMAN_PROMPT} Here are some relevant document excerpts:\n\n"
+    messages = [
+        {
+            "role": "user",
+            "content": [
+                {
+                    "type": "text",
+                    "text": f"Here are some relevant document excerpts:\n\n"
+                }
+            ]
+        }
+    ]
+
     for idx, result in enumerate(serializable_results, 1):
-        claude_prompt += f"Excerpt {idx}:\n"
-        claude_prompt += f"Content: {result['base64']}\n"
-        claude_prompt += f"Metadata: {result['metadata']}\n\n"
-    
-    claude_prompt += f"Based on these excerpts, please answer the following question: {query}{AI_PROMPT}"
-    
-    claude_response = anthropic.completions.create(
+        messages[0]["content"].extend([
+            {"type": "text", "text": f"Excerpt {idx}:\n"},
+            {"type": "image", "source": {"type": "base64", "media_type": "image/png", "data": result['base64']}},
+            {"type": "text", "text": f"Metadata: {result['metadata']}\n\n"}
+        ])
+
+    messages[0]["content"].append({"type": "text", "text": f"Based on these excerpts, please answer the following question: {query}"})
+
+    claude_response = client.messages.create(
         model="claude-3-sonnet-20240229",
-        max_tokens_to_sample=1000,
-        prompt=claude_prompt
+        max_tokens=1000,
+        temperature=0,
+        messages=messages
     )
     
     return jsonify({
         "byaldi_results": serializable_results,
-        "claude_answer": claude_response.completion,
+        "claude_answer": claude_response.content[0].text,
         "tokens_consumed": {
-            "prompt_tokens": claude_response.usage.prompt_tokens,
-            "completion_tokens": claude_response.usage.completion_tokens,
-            "total_tokens": claude_response.usage.total_tokens
+            "prompt_tokens": claude_response.usage.input_tokens,
+            "completion_tokens": claude_response.usage.output_tokens,
+            "total_tokens": claude_response.usage.input_tokens + claude_response.usage.output_tokens
         }
     }), 200
 
@@ -141,29 +157,50 @@ def query_image():
         os.remove(image_path)
         
         # Process results with Claude
-        claude_prompt = f"{HUMAN_PROMPT} Here's the query image encoded in base64: {encoded_query_image}\n\n"
-        claude_prompt += "Here are some relevant image results:\n\n"
+        messages = [
+            {
+                "role": "user",
+                "content": [
+                    {
+                        "type": "text",
+                        "text": "Here's the query image:"
+                    },
+                    {
+                        "type": "image",
+                        "source": {"type": "base64", "media_type": "image/png", "data": encoded_query_image}
+                    },
+                    {
+                        "type": "text",
+                        "text": "Here are some relevant image results:\n\n"
+                    }
+                ]
+            }
+        ]
+
         for idx, result in enumerate(serializable_results, 1):
-            claude_prompt += f"Image {idx}:\n"
-            claude_prompt += f"Content: {result['base64']}\n"
-            claude_prompt += f"Metadata: {result['metadata']}\n\n"
-        
-        claude_prompt += f"Based on these images, please answer the following question: {query}{AI_PROMPT}"
-        
-        claude_response = anthropic.completions.create(
+            messages[0]["content"].extend([
+                {"type": "text", "text": f"Image {idx}:\n"},
+                {"type": "image", "source": {"type": "base64", "media_type": "image/png", "data": result['base64']}},
+                {"type": "text", "text": f"Metadata: {result['metadata']}\n\n"}
+            ])
+
+        messages[0]["content"].append({"type": "text", "text": f"Based on these images, please answer the following question: {query}"})
+
+        claude_response = client.messages.create(
             model="claude-3-sonnet-20240229",
-            max_tokens_to_sample=1000,
-            prompt=claude_prompt
+            max_tokens=1000,
+            temperature=0,
+            messages=messages
         )
         
         return jsonify({
             "byaldi_results": serializable_results,
-            "claude_answer": claude_response.completion,
+            "claude_answer": claude_response.content[0].text,
             "query_image_base64": encoded_query_image,
             "tokens_consumed": {
-                "prompt_tokens": claude_response.usage.prompt_tokens,
-                "completion_tokens": claude_response.usage.completion_tokens,
-                "total_tokens": claude_response.usage.total_tokens
+                "prompt_tokens": claude_response.usage.input_tokens,
+                "completion_tokens": claude_response.usage.output_tokens,
+                "total_tokens": claude_response.usage.input_tokens + claude_response.usage.output_tokens
             }
         }), 200
     return jsonify({"error": "Invalid image file"}), 400
