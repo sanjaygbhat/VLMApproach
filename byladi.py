@@ -51,8 +51,17 @@ def upload_pdf():
         )
         document_indices[doc_id] = index_path
         
+        # Debug information
+        print(f"Type of RAG.index: {type(RAG.index)}")
+        print(f"Type of index_path: {type(index_path)}")
+        print(f"Value of index_path: {index_path}")
+        
         # Save the index to the network volume
-        faiss.write_index(RAG.index, index_path)
+        if hasattr(RAG, 'index') and isinstance(RAG.index, faiss.Index):
+            faiss.write_index(RAG.index, str(index_path))
+        else:
+            print("RAG.index is not a valid FAISS index")
+            return jsonify({"error": "Failed to create FAISS index"}), 500
         
         return jsonify({"document_id": doc_id}), 200
     return jsonify({"error": "Invalid file type"}), 400
@@ -73,7 +82,7 @@ def query_document():
     index_path = document_indices[doc_id]
     
     # Load the specific index for this document from the network volume
-    RAG_specific = RAGMultiModalModel.from_index(faiss.read_index(index_path))
+    RAG_specific = RAGMultiModalModel.from_index(faiss.read_index(str(index_path)))
     
     # Perform the search on the specific index
     results = RAG_specific.search(query, k=k)
