@@ -5,6 +5,7 @@ from flask import Flask, request, jsonify
 from werkzeug.utils import secure_filename
 from byaldi import RAGMultiModalModel
 import anthropic
+import faiss
 
 app = Flask(__name__)
 
@@ -19,9 +20,12 @@ client = anthropic.Anthropic(
 # Store document identifiers and their corresponding indices
 document_indices = {}
 
-UPLOAD_FOLDER = 'uploads'
+UPLOAD_FOLDER = '/runpod-volume/uploads'
+INDEX_FOLDER = '/runpod-volume/indices'
 if not os.path.exists(UPLOAD_FOLDER):
     os.makedirs(UPLOAD_FOLDER)
+if not os.path.exists(INDEX_FOLDER):
+    os.makedirs(INDEX_FOLDER)
 
 @app.route('/upload_pdf', methods=['POST'])
 def upload_pdf():
@@ -38,13 +42,17 @@ def upload_pdf():
         
         # Create a new index for this document
         index_name = f"index_{doc_id}"
+        index_path = os.path.join(INDEX_FOLDER, f"{index_name}.faiss")
         RAG.index(
             input_path=file_path,
             index_name=index_name,
             store_collection_with_index=True,
             overwrite=True
         )
-        document_indices[doc_id] = index_name
+        document_indices[doc_id] = index_path
+        
+        # Save the index to the network volume
+        faiss.write_index(RAG.index, index_path)
         
         return jsonify({"document_id": doc_id}), 200
     return jsonify({"error": "Invalid file type"}), 400
@@ -62,10 +70,10 @@ def query_document():
     if doc_id not in document_indices:
         return jsonify({"error": "Invalid document_id"}), 400
     
-    index_name = document_indices[doc_id]
+    index_path = document_indices[doc_id]
     
-    # Load the specific index for this document
-    RAG_specific = RAGMultiModalModel.from_index(index_name)
+    # Load the specific index for this document from the network volume
+    RAG_specific = RAGMultiModalModel.from_index(faiss.read_index(index_path))
     
     # Perform the search on the specific index
     results = RAG_specific.search(query, k=k)
@@ -105,7 +113,7 @@ def query_document():
 
     claude_response = client.messages.create(
         model="claude-3-sonnet-20240229",
-        max_tokens=1000,
+        max_tokens=5000,
         temperature=0,
         messages=messages
     )
@@ -188,7 +196,7 @@ def query_image():
 
         claude_response = client.messages.create(
             model="claude-3-sonnet-20240229",
-            max_tokens=1000,
+            max_tokens=5000,
             temperature=0,
             messages=messages
         )
