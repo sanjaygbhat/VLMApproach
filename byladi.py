@@ -5,7 +5,6 @@ from flask import Flask, request, jsonify
 from werkzeug.utils import secure_filename
 from byaldi import RAGMultiModalModel
 import anthropic
-import faiss
 
 app = Flask(__name__)
 
@@ -43,25 +42,30 @@ def upload_pdf():
         # Create a new index for this document
         index_name = f"index_{doc_id}"
         index_path = os.path.join(INDEX_FOLDER, f"{index_name}.faiss")
+        
+        # Index the document
         RAG.index(
             input_path=file_path,
             index_name=index_name,
             store_collection_with_index=True,
             overwrite=True
         )
-        document_indices[doc_id] = index_path
         
         # Debug information
-        print(f"Type of RAG.index: {type(RAG.index)}")
-        print(f"Type of index_path: {type(index_path)}")
-        print(f"Value of index_path: {index_path}")
+        print(f"Index name: {index_name}")
+        print(f"Index path: {index_path}")
         
-        # Save the index to the network volume
-        if hasattr(RAG, 'index') and isinstance(RAG.index, faiss.Index):
-            faiss.write_index(RAG.index, str(index_path))
+        # Check if the index was created in the .byaldi directory
+        byaldi_index_path = os.path.join('.byaldi', index_name)
+        if os.path.exists(byaldi_index_path):
+            # Move the index to the desired location
+            os.rename(byaldi_index_path, index_path)
+            print(f"Moved index from {byaldi_index_path} to {index_path}")
         else:
-            print("RAG.index is not a valid FAISS index")
-            return jsonify({"error": "Failed to create FAISS index"}), 500
+            print(f"Index not found at {byaldi_index_path}")
+            return jsonify({"error": "Failed to create index"}), 500
+        
+        document_indices[doc_id] = index_path
         
         return jsonify({"document_id": doc_id}), 200
     return jsonify({"error": "Invalid file type"}), 400
@@ -82,7 +86,10 @@ def query_document():
     index_path = document_indices[doc_id]
     
     # Load the specific index for this document from the network volume
-    RAG_specific = RAGMultiModalModel.from_index(faiss.read_index(str(index_path)))
+    if os.path.exists(index_path):
+        RAG_specific = RAGMultiModalModel.from_index(index_path)
+    else:
+        return jsonify({"error": "Index file not found"}), 500
     
     # Perform the search on the specific index
     results = RAG_specific.search(query, k=k)
