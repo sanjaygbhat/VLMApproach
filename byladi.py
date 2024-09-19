@@ -1,5 +1,6 @@
 import os
 import uuid
+import json
 import base64
 from flask import Flask, request, jsonify
 from werkzeug.utils import secure_filename
@@ -16,8 +17,8 @@ client = anthropic.Anthropic(
     api_key=os.environ.get("ANTHROPIC_API_KEY")
 )
 
-# Store document identifiers and their corresponding indices
-document_indices = {}
+# File to store document IDs and their corresponding index paths
+DOCUMENT_INDEX_FILE = '/runpod-volume/document_indices.json'
 
 UPLOAD_FOLDER = '/runpod-volume/uploads'
 INDEX_FOLDER = '/runpod-volume/indices'
@@ -25,6 +26,21 @@ if not os.path.exists(UPLOAD_FOLDER):
     os.makedirs(UPLOAD_FOLDER)
 if not os.path.exists(INDEX_FOLDER):
     os.makedirs(INDEX_FOLDER)
+
+# Load existing document indices
+def load_document_indices():
+    if os.path.exists(DOCUMENT_INDEX_FILE):
+        with open(DOCUMENT_INDEX_FILE, 'r') as f:
+            return json.load(f)
+    return {}
+
+# Save document indices
+def save_document_indices(indices):
+    with open(DOCUMENT_INDEX_FILE, 'w') as f:
+        json.dump(indices, f)
+
+# Initialize document_indices
+document_indices = load_document_indices()
 
 @app.route('/upload_pdf', methods=['POST'])
 def upload_pdf():
@@ -65,7 +81,9 @@ def upload_pdf():
             print(f"Index not found at {byaldi_index_path}")
             return jsonify({"error": "Failed to create index"}), 500
         
+        # Store the document ID and index path
         document_indices[doc_id] = index_path
+        save_document_indices(document_indices)
         
         return jsonify({"document_id": doc_id}), 200
     return jsonify({"error": "Invalid file type"}), 400
