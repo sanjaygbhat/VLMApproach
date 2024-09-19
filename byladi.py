@@ -147,7 +147,7 @@ def query_document():
 
     claude_response = client.messages.create(
         model="claude-3-sonnet-20240229",
-        max_tokens=5000,
+        max_tokens=4000,
         temperature=0,
         messages=messages
     )
@@ -230,7 +230,7 @@ def query_image():
 
         claude_response = client.messages.create(
             model="claude-3-sonnet-20240229",
-            max_tokens=5000,
+            max_tokens=4000,
             temperature=0,
             messages=messages
         )
