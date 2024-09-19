@@ -39,7 +39,7 @@ def upload_pdf():
         RAG.index(
             input_path=file_path,
             index_name=index_name,
-            store_collection_with_index=False,
+            store_collection_with_index=True,
             overwrite=True
         )
         document_indices[doc_id] = index_name
@@ -79,7 +79,30 @@ def query_document():
         } for result in results
     ]
     
-    return jsonify({"results": serializable_results}), 200
+    # Process results with Claude
+    claude_prompt = f"{HUMAN_PROMPT} Here are some relevant document excerpts:\n\n"
+    for idx, result in enumerate(serializable_results, 1):
+        claude_prompt += f"Excerpt {idx}:\n"
+        claude_prompt += f"Content: {result['base64']}\n"
+        claude_prompt += f"Metadata: {result['metadata']}\n\n"
+    
+    claude_prompt += f"Based on these excerpts, please answer the following question: {query}{AI_PROMPT}"
+    
+    claude_response = anthropic.completions.create(
+        model="claude-3-sonnet-20240229",
+        max_tokens_to_sample=1000,
+        prompt=claude_prompt
+    )
+    
+    return jsonify({
+        "byaldi_results": serializable_results,
+        "claude_answer": claude_response.completion,
+        "tokens_consumed": {
+            "prompt_tokens": claude_response.usage.prompt_tokens,
+            "completion_tokens": claude_response.usage.completion_tokens,
+            "total_tokens": claude_response.usage.total_tokens
+        }
+    }), 200
 
 @app.route('/query_image', methods=['POST'])
 def query_image():
@@ -110,15 +133,22 @@ def query_image():
             } for result in byaldi_results
         ]
         
-        # Encode the image to base64
+        # Encode the query image to base64
         with open(image_path, "rb") as image_file:
-            encoded_image = base64.b64encode(image_file.read()).decode('utf-8')
+            encoded_query_image = base64.b64encode(image_file.read()).decode('utf-8')
         
         # Clean up the temporary image file
         os.remove(image_path)
         
         # Process results with Claude
-        claude_prompt = f"{HUMAN_PROMPT} Here's an image encoded in base64: {encoded_image}\n\nAnd here's some information about the image: {serializable_results}\n\nBased on this information, please answer the following question: {query}{AI_PROMPT}"
+        claude_prompt = f"{HUMAN_PROMPT} Here's the query image encoded in base64: {encoded_query_image}\n\n"
+        claude_prompt += "Here are some relevant image results:\n\n"
+        for idx, result in enumerate(serializable_results, 1):
+            claude_prompt += f"Image {idx}:\n"
+            claude_prompt += f"Content: {result['base64']}\n"
+            claude_prompt += f"Metadata: {result['metadata']}\n\n"
+        
+        claude_prompt += f"Based on these images, please answer the following question: {query}{AI_PROMPT}"
         
         claude_response = anthropic.completions.create(
             model="claude-3-sonnet-20240229",
@@ -129,6 +159,7 @@ def query_image():
         return jsonify({
             "byaldi_results": serializable_results,
             "claude_answer": claude_response.completion,
+            "query_image_base64": encoded_query_image,
             "tokens_consumed": {
                 "prompt_tokens": claude_response.usage.prompt_tokens,
                 "completion_tokens": claude_response.usage.completion_tokens,
